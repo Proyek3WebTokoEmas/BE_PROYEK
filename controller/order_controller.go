@@ -2,15 +2,17 @@ package controller
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"strings"
 
 	"log"
 	"net/http"
+	"proyek3/config"
 	"proyek3/database"
 	"proyek3/model"
-	"strconv"
 
-	"github.com/gorilla/mux"
+	"github.com/dgrijalva/jwt-go"
 )
 
 // HandleGetOrders mengembalikan semua data pesanan dari database
@@ -41,44 +43,113 @@ func HandleGetOrders(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+var jwtKey = []byte("ClWIuIWqLaIhl1GRZi-bYjsM4niJxUeQe4Ot4nObVHY") // Ganti dengan secret key Anda
 // HandleGetOrderById mengembalikan detail pesanan berdasarkan ID
-func HandleGetOrderById(w http.ResponseWriter, r *http.Request) {
-	// Ambil ID dari parameter URL
-	vars := mux.Vars(r)
-	id, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		http.Error(w, "Invalid order ID", http.StatusBadRequest)
+func HandleGetOrdersByUserId(w http.ResponseWriter, r *http.Request) {
+	// Ambil token dari header Authorization
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"message": "Authorization header missing"}`, http.StatusUnauthorized)
 		return
 	}
 
-	// Query untuk mengambil data pesanan berdasarkan ID
-	var order model.Order
-	err = database.DB.QueryRow(`
-		SELECT id, jenis_perhiasan, jenis_emas, berat_emas, campuran_tambahan, persentase_emas, total_harga 
-		FROM custom_orders WHERE id = $1
-	`, id).Scan(
-		&order.ID,
-		&order.JenisPerhiasan,
-		&order.JenisEmas,
-		&order.BeratEmas,
-		&order.CampuranTambahan,
-		&order.PersentaseEmas,
-		&order.TotalHarga,
-	)
-	if err != nil {
-		http.Error(w, "Order not found", http.StatusNotFound)
+	// Pisahkan "Bearer" dan tokennya
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+	if tokenString == authHeader {
+		http.Error(w, `{"message": "Invalid Authorization format"}`, http.StatusUnauthorized)
 		return
 	}
 
-	// Kirim respons dalam format JSON
+	// Parsing token
+	claims := &config.Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		return []byte(config.JwtSecret), nil
+	})
+
+	// Periksa jika token valid
+	if err != nil || !token.Valid {
+		http.Error(w, `{"message": "Invalid token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Ambil user_id dari klaim token
+	userID := claims.UserID
+	fmt.Println("User ID:", userID)
+
+	// Query untuk mengambil data pesanan berdasarkan user_id
+	rows, err := database.DB.Query(`
+        SELECT id, jenis_perhiasan, jenis_emas, berat_emas, campuran_tambahan, persentase_emas, total_harga
+        FROM custom_orders
+        WHERE user_id = $1
+    `, userID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
+		fmt.Println("Database query error:", err)
+		return
+	}
+	defer rows.Close()
+
+	// Parsing hasil query ke dalam slice
+	var orders []model.Order
+	for rows.Next() {
+		var order model.Order
+		if err := rows.Scan(
+			&order.ID,
+			&order.JenisPerhiasan,
+			&order.JenisEmas,
+			&order.BeratEmas,
+			&order.CampuranTambahan,
+			&order.PersentaseEmas,
+			&order.TotalHarga,
+		); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Error reading data"})
+			fmt.Println("Error scanning row:", err)
+			return
+		}
+		orders = append(orders, order)
+	}
+
+	// Kirim respons JSON
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(order)
+	json.NewEncoder(w).Encode(orders)
 }
 
 // HandleAddOrder meng-handle POST request untuk menambahkan order ke database
 func HandleAddOrder(w http.ResponseWriter, r *http.Request) {
 	// Logging untuk debugging
 	log.Println("Handling Add Order Request")
+
+	// Ambil token dari header Authorization
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"message": "Authorization header missing"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Pisahkan "Bearer" dan tokennya
+	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+	if tokenString == authHeader {
+		http.Error(w, `{"message": "Invalid Authorization format"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Parsing token
+	claims := &config.Claims{}
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		return []byte(config.JwtSecret), nil
+	})
+
+	// Periksa jika token valid
+	if err != nil || !token.Valid {
+		http.Error(w, `{"message": "Invalid token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Ambil user_id dari klaim token
+	userID := claims.UserID
+	log.Printf("User ID from token: %d", userID)
 
 	// Parse data dari body request
 	var order model.OrderRequest
@@ -109,10 +180,10 @@ func HandleAddOrder(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Received Order Data: %+v", order)
 
 	// Query untuk memasukkan data ke database
-	query := `INSERT INTO custom_orders (jenis_perhiasan, jenis_emas, berat_emas, campuran_tambahan, persentase_emas, total_harga) 
-              VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
+	query := `INSERT INTO custom_orders (user_id, jenis_perhiasan, jenis_emas, berat_emas, campuran_tambahan, persentase_emas, total_harga) 
+              VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`
 	var id int
-	err = database.DB.QueryRow(query, order.JenisPerhiasan, order.JenisEmas, order.BeratEmas, order.CampuranTambahan, order.PersentaseEmas, order.TotalHarga).Scan(&id)
+	err = database.DB.QueryRow(query, userID, order.JenisPerhiasan, order.JenisEmas, order.BeratEmas, order.CampuranTambahan, order.PersentaseEmas, order.TotalHarga).Scan(&id)
 	if err != nil {
 		http.Error(w, "Error saving to database", http.StatusInternalServerError)
 		log.Printf("Error inserting data into database: %v", err)
@@ -127,66 +198,4 @@ func HandleAddOrder(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
-}	
-// 	beratEmasStr := r.FormValue("berat_emas")
-// 	persentaseEmasStr := r.FormValue("persentase_emas")
-// 	totalHargaStr := r.FormValue("total_harga")
-
-// 	if beratEmasStr == "" || persentaseEmasStr == "" || totalHargaStr == "" {
-// 		http.Error(w, "Missing required fields", http.StatusBadRequest)
-// 		log.Println("Error: Missing one or more required fields")
-// 		return
-// 	}
-
-// 	beratEmas, err := strconv.ParseFloat(beratEmasStr, 64)
-// 	if err != nil {
-// 		http.Error(w, "Invalid berat_emas value", http.StatusBadRequest)
-// 		log.Println("Error converting berat_emas:", err)
-// 		return
-// 	}
-
-// 	persentaseEmas, err := strconv.ParseFloat(persentaseEmasStr, 64)
-// 	if err != nil {
-// 		http.Error(w, "Invalid persentase_emas value", http.StatusBadRequest)
-// 		log.Println("Error converting persentase_emas:", err)
-// 		return
-// 	}
-
-// 	totalHarga, err := strconv.ParseFloat(totalHargaStr, 64)
-// 	if err != nil {
-// 		http.Error(w, "Invalid total_harga value", http.StatusBadRequest)
-// 		log.Println("Error converting total_harga:", err)
-// 		return
-// 	}
-
-
-// 	// Membuat struct OrderRequest
-// 	orderRequest := model.OrderRequest{
-// 		JenisPerhiasan:   r.FormValue("jenis_perhiasan"),
-// 		JenisEmas:        r.FormValue("jenis_emas"),
-// 		BeratEmas:        beratEmas,
-// 		CampuranTambahan: r.FormValue("campuran_tambahan"),
-// 		PersentaseEmas:   persentaseEmas,
-// 		TotalHarga:       totalHarga,
-// 	}
-
-// 	// Lanjutkan dengan proses lainnya (seperti validasi dan penyimpanan ke database)
-// 	log.Printf("Received order: %+v\n", orderRequest)
-
-// 	// Query untuk memasukkan data order ke dalam tabel 'orders'
-// 	query := `INSERT INTO custom_orders (jenis_perhiasan, jenis_emas, berat_emas, campuran_tambahan, persentase_emas, total_harga)
-//               VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`
-
-// 	var id int
-// 	err = database.DB.QueryRow(query, orderRequest.JenisPerhiasan, orderRequest.JenisEmas, orderRequest.BeratEmas, orderRequest.CampuranTambahan, orderRequest.PersentaseEmas, orderRequest.TotalHarga).Scan(&id)
-// 	if err != nil {
-// 		http.Error(w, "Failed to insert data", http.StatusInternalServerError)
-// 		log.Println("Error inserting data into DB:", err)
-// 		return
-// 	}
-
-// 	// Mengirim respons jika berhasil
-// 	w.Header().Set("Content-Type", "application/json")
-// 	response := map[string]interface{}{"status": "success", "id": id}
-// 	json.NewEncoder(w).Encode(response)
-
+}

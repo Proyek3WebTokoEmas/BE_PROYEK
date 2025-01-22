@@ -14,7 +14,7 @@ var DB *sql.DB
 func InitDB() {
     var err error
 
-    // Load environment variables from .env file
+    // // Load environment variables from .env file
     err = godotenv.Load()
     if err != nil {
         log.Fatal("Error loading .env file")

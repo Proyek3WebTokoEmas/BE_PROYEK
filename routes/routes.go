@@ -32,7 +32,7 @@ func InitRoutes() *mux.Router {
 	// Endpoint untuk pesanan, termasuk menambah dan mendapatkan pesanan
 	protected.HandleFunc("/orders", controller.HandleAddOrder).Methods("POST")         // Menambahkan order
 	protected.HandleFunc("/orders", controller.HandleGetOrders).Methods("GET")         // Mendapatkan semua pesanan
-	protected.HandleFunc("/orders/{id}", controller.HandleGetOrderById).Methods("GET") // Mendapatkan pesanan berdasarkan ID
+	protected.HandleFunc("/orders/{id}", controller.HandleGetOrdersByUserId).Methods("GET") // Mendapatkan pesanan berdasarkan ID
 
 	return router
 }

@@ -1,16 +1,24 @@
 package config
 
 import (
-	"github.com/joho/godotenv"
 	"log"
 	"os"
+
+	"github.com/dgrijalva/jwt-go"
+	"github.com/joho/godotenv"
 )
 
 var JwtSecret string
 var SendGridAPIKey string
 
+type Claims struct {
+	UserID int    `json:"user_id"`
+	Email  string `json:"email"`
+	jwt.StandardClaims
+}
+
 func InitConfig() {
-	// Memuat file .env
+	// Memuat file
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatal("Error loading .env file")

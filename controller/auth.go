@@ -25,32 +25,35 @@ type Credentials struct {
 
 // Claims untuk JWT
 type Claims struct {
+	UserID int    `json:"user_id"`
 	Email string `json:"email"`
 	jwt.StandardClaims
 }
 
 func CreateToken(user model.User) (string, error) {
-	claims := jwt.MapClaims{
-		"email": user.Email,
-		"exp":   time.Now().Add(time.Hour * 72).Unix(),
-	}
+    // Tambahkan klaim id, bukan user_id
+    claims := jwt.MapClaims{
+        "id":      user.ID, // Gunakan klaim id
+        "email":   user.Email,
+        "exp":     time.Now().Add(72 * time.Hour).Unix(), // Token berlaku selama 72 jam
+    }
 
-	// Buat token menggunakan signing method HMAC dan secret key
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    // Buat token dengan klaim di atas
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
-	// Tanda tangani token dengan secret key
-	tokenString, err := token.SignedString([]byte(config.JwtSecret))
-	if err != nil {
-		return "", err
-	}
+    // Tanda tangani token dengan secret key
+    tokenString, err := token.SignedString([]byte(config.JwtSecret))
+    if err != nil {
+        return "", fmt.Errorf("error signing token: %w", err)
+    }
 
-	return tokenString, nil
+    return tokenString, nil
 }
 
 // Fungsi untuk mengirim email konfirmasi menggunakan SendGrid
 func sendVerificationEmail(toEmail, verificationToken string) error {
 	apiKey := config.SendGridAPIKey
-	verificationLink := fmt.Sprintf("http://localhost:8081/verify-email?token=%s", verificationToken) // Cukup kirimkan token
+	verificationLink := fmt.Sprintf("https://be-3.vercel.app/verify-email?token=%s", verificationToken) // Cukup kirimkan token
 
 	from := mail.NewEmail("Your App", "fathir080604@gmail.com")
 	to := mail.NewEmail("User", toEmail)
@@ -145,34 +148,48 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "Error hashing password", http.StatusInternalServerError)
 		return
 	}
 
-	_, err = database.DB.Exec(`INSERT INTO "user" (name, email, password, verified) VALUES ($1, $2, $3, $4)`,
-		user.Name, user.Email, string(hashedPassword), false)
+	// Insert user into the database and retrieve the ID
+	var userID int
+	err = database.DB.QueryRow(`
+		INSERT INTO "user" (name, email, password, verified)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`, user.Name, user.Email, string(hashedPassword), false).Scan(&userID)
+
 	if err != nil {
 		http.Error(w, "Error saving user", http.StatusInternalServerError)
 		return
 	}
 
+	// Create token
 	tokenString, err := CreateToken(user)
 	if err != nil {
 		http.Error(w, "Error generating token", http.StatusInternalServerError)
 		return
 	}
 
+	// Send verification email
 	err = sendVerificationEmail(user.Email, tokenString)
 	if err != nil {
 		http.Error(w, "Error sending verification email", http.StatusInternalServerError)
 		return
 	}
 
+	// Return success response with user ID
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Registration successful, verify your email"})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Registration successful, verify your email",
+		"user_id": userID,
+	})
 }
+
 
 // Fungsi untuk login pengguna
 func Login(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +202,11 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 	// Ambil data user berdasarkan email
 	var user model.User
-	err = database.DB.QueryRow(`SELECT email, password, verified FROM "user" WHERE email = $1`, creds.Email).Scan(&user.Email, &user.Password, &user.Verified)
+	err = database.DB.QueryRow(`
+    SELECT id, email, password, verified, name 
+    FROM "user" 
+    WHERE email = $1`, creds.Email).Scan(&user.ID, &user.Email, &user.Password, &user.Verified, &user.Name)
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(w, `{"message": "User not found"}`, http.StatusUnauthorized)
@@ -211,6 +232,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	// Generate JWT Token
 	expirationTime := time.Now().Add(60 * time.Minute)
 	claims := &Claims{
+		UserID: user.ID,
 		Email: creds.Email,
 		StandardClaims: jwt.StandardClaims{
 			ExpiresAt: expirationTime.Unix(),
@@ -224,8 +246,12 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Kirim token ke client
-	response := map[string]interface{}{"message": "Login successful", "token": tokenString}
+	// Kirim token dan nama ke client
+	response := map[string]interface{}{
+		"message": "Login successful",
+		"token":   tokenString,
+		"name":    user.Name, // Tambahkan nama pengguna ke respons
+	}
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -254,4 +280,29 @@ func Authenticate(next http.Handler) http.Handler {
 		// Token valid, lanjutkan ke handler berikutnya
 		next.ServeHTTP(w, r)
 	})
+}
+
+func verifyToken(tokenString string) (int, error) {
+    token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+        if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, fmt.Errorf("unexpected signing method")
+        }
+        return []byte(config.JwtSecret), nil
+    })
+
+    if err != nil || !token.Valid {
+        return 0, fmt.Errorf("invalid token")
+    }
+
+    claims, ok := token.Claims.(jwt.MapClaims)
+    if !ok || claims["id"] == nil {
+        return 0, fmt.Errorf("no id in token")
+    }
+
+    userID, ok := claims["id"].(float64)
+    if !ok {
+        return 0, fmt.Errorf("invalid id in token")
+    }
+
+    return int(userID), nil
 }
