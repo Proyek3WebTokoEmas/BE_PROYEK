@@ -17,22 +17,23 @@ import (
 
 // HandleGetOrders mengembalikan semua data pesanan dari database
 func HandleGetOrders(w http.ResponseWriter, r *http.Request) {
-	// Ambil data orders dari database
-	rows, err := database.DB.Query(`SELECT jenis_perhiasan, jenis_emas, berat_emas, campuran_tambahan, persentase_emas, total_harga FROM custom_orders`)
+	// Ambil data orders dari database, pastikan query mengambil id
+	rows, err := database.DB.Query(`SELECT id, jenis_perhiasan, jenis_emas, berat_emas, campuran_tambahan, persentase_emas, total_harga FROM custom_orders`)
 	if err != nil {
 		http.Error(w, "Error fetching orders", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	var orders []model.OrderRequest
+	var orders []model.Order
 	for rows.Next() {
-		var OrderRequest model.OrderRequest
-		if err := rows.Scan(&OrderRequest.JenisPerhiasan, &OrderRequest.JenisEmas, &OrderRequest.BeratEmas, &OrderRequest.CampuranTambahan, &OrderRequest.PersentaseEmas, &OrderRequest.TotalHarga); err != nil {
+		var order model.Order
+		// Scan nilai id bersama dengan kolom lainnya
+		if err := rows.Scan(&order.ID, &order.JenisPerhiasan, &order.JenisEmas, &order.BeratEmas, &order.CampuranTambahan, &order.PersentaseEmas, &order.TotalHarga); err != nil {
 			http.Error(w, "Error scanning order data", http.StatusInternalServerError)
 			return
 		}
-		orders = append(orders, OrderRequest)
+		orders = append(orders, order)
 	}
 
 	// Kirimkan respons sebagai JSON

@@ -31,14 +31,15 @@ type Claims struct {
 }
 
 func CreateToken(user model.User) (string, error) {
-    // Tambahkan klaim id, bukan user_id
+    // Tambahkan klaim id, email, dan role
     claims := jwt.MapClaims{
-        "id":      user.ID, // Gunakan klaim id
+        "id":      user.ID,
         "email":   user.Email,
-        "exp":     time.Now().Add(72 * time.Hour).Unix(), // Token berlaku selama 72 jam
+        "role":    user.Role,  // Menambahkan role ke klaim
+        "exp":     time.Now().Add(72 * time.Hour).Unix(),
     }
 
-    // Buat token dengan klaim di atas
+    // Membuat token dengan klaim
     token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
     // Tanda tangani token dengan secret key
@@ -140,6 +141,15 @@ func VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Email verified successfully"))
 }
 
+// Fungsi helper untuk mengembalikan nilai default jika kosong
+func defaultIfEmpty(value, defaultValue string) string {
+    if value == "" {
+        return defaultValue
+    }
+    return value
+}
+
+
 // Fungsi untuk register pengguna baru
 func Register(w http.ResponseWriter, r *http.Request) {
 	var user model.User
@@ -148,6 +158,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -155,16 +166,23 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	role := "" // Misalnya nilai role yang kosong
+	role = defaultIfEmpty(role, "user")
+
+	log.Println("Role:", role)
+
 	// Insert user into the database and retrieve the ID
 	var userID int
 	err = database.DB.QueryRow(`
-		INSERT INTO "user" (name, email, password, verified)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO "user" (name, email, password, verified, role)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, user.Name, user.Email, string(hashedPassword), false).Scan(&userID)
+	`, user.Name, user.Email, string(hashedPassword), false, "user").Scan(&userID)
 
 	if err != nil {
 		http.Error(w, "Error saving user", http.StatusInternalServerError)
+	
+		log.Printf("Error saving user: %v\n", err)
 		return
 	}
 
@@ -203,9 +221,9 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	// Ambil data user berdasarkan email
 	var user model.User
 	err = database.DB.QueryRow(`
-    SELECT id, email, password, verified, name 
+    SELECT id, email, password, verified, name, role 
     FROM "user" 
-    WHERE email = $1`, creds.Email).Scan(&user.ID, &user.Email, &user.Password, &user.Verified, &user.Name)
+    WHERE email = $1`, creds.Email).Scan(&user.ID, &user.Email, &user.Password, &user.Verified, &user.Name, &user.Role)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -249,8 +267,9 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	// Kirim token dan nama ke client
 	response := map[string]interface{}{
 		"message": "Login successful",
-		"token":   tokenString,
-		"name":    user.Name, // Tambahkan nama pengguna ke respons
+		"token":   tokenString, // Pastikan token dikirim
+		"name":    user.Name,
+		"role":    user.Role,
 	}
 	json.NewEncoder(w).Encode(response)
 }

@@ -9,4 +9,5 @@ type Order struct {
     CampuranTambahan string  `json:"campuran_tambahan"`
     PersentaseEmas   float64 `json:"persentase_emas"`
     TotalHarga       float64 `json:"total_harga"`
+    Status           string  `json:"status"`
 }

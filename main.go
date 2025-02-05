@@ -1,5 +1,4 @@
-package main
-
+package handler
 import (
 	"log"
 	"net/http"
@@ -24,7 +23,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	// Inisialisasi router dengan middleware CORS
 	router := routes.InitRoutes()
 	corsHandler := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://127.0.0.1:5501", "https://proyek3webtokoemas.github.io"}, // Disesuaikan
+		AllowedOrigins:   []string{"http://127.0.0.1:5501", "https://proyek3webtokoemas.github.io", "http://127.0.0.1:5500"}, // Disesuaikan
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE"},
 		AllowedHeaders:   []string{"Authorization", "Content-Type"},
 		AllowCredentials: true,
