@@ -208,7 +208,6 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 // Fungsi untuk login pengguna
 func Login(w http.ResponseWriter, r *http.Request) {
 	var creds Credentials

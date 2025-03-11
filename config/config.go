@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/dgrijalva/jwt-go"
-	// "github.com/joho/godotenv"
+	"github.com/joho/godotenv"
 )
 
 var JwtSecret string
@@ -19,10 +19,10 @@ type Claims struct {
 
 func InitConfig() {
 	// Memuat file
-	// err := godotenv.Load()
-	// if err != nil {
-	// 	log.Fatal("Error loading .env file")
-	// }
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
 
 	// Ambil nilai variabel environment JWT_SECRET dari file .env
 	JwtSecret = os.Getenv("JWT_SECRET")
